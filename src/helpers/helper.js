@@ -1,12 +1,24 @@
 import axios from "axios";
 import { v4 as randomUUID } from "uuid";
+import fs from "fs";
+let time = Date.now();
+const isExpired = (storedTimeInMillis) => {
+    const storedTime = new Date(storedTimeInMillis);
+    const currentTime = new Date();
+    const timeDifferenceInMillis = currentTime - storedTime;
+    const hoursPassed = timeDifferenceInMillis / (1000 * 60 * 60);
+    return hoursPassed < 20;
+}
 
 class Helper {
-    constructor() {
-        
+    constructor(username, password) {
+        if(!username && !password) return "Give username and password "
+       this.user = username;
+       this.pass = password;
+       this.session = new Map()
     }
 
-    async fetchHeaders() {
+     fetchHeaders = async () => {
         try {
             const response = await axios.get(
                 "https://i.instagram.com/api/v1/si/fetch_headers/?challenge_type=signup",
@@ -17,7 +29,7 @@ class Helper {
         }
     }
 
-    async getCookie(username, password, withLoginData = true) {
+      login = async () => {
         try {
             this.headersPromise = this.fetchHeaders();
             const [headers] = await Promise.all([this.headersPromise]);
@@ -28,16 +40,29 @@ class Helper {
                 "Accept-Language": "en-US,en;q=0.9",
                 Cookie: this.formatCookie(headers["set-cookie"]) || "",
             };
-
-            const res = await axios.post(
+            
+            let storedtime = (fs.existsSync("data.json"))?
+             JSON.parse(await fs.promises.readFile("data.json", "utf8"))?.time : time;
+                
+            let res;
+            if(fs.existsSync("data.json") && isExpired(storedtime)) {
+                res = JSON.parse(await fs.promises.readFile("data.json", "utf8"));
+            } else {
+            let resp =  await axios.post(
                 "https://i.instagram.com/api/v1/accounts/login/?",
-                `username=${username}&password=${encodeURIComponent(password)}&device_id=${randomUUID()}&login_attempt_count=0`,
+                `username=${this.user}&password=${encodeURIComponent(this.pass)}&device_id=${randomUUID()}&login_attempt_count=0`,
                 {
                     headers: loginHeaders,
                 },
             );
-            const cookie = this.formatCookie(res.headers["set-cookie"]) || "";
-            return withLoginData ? { ...res.data, cookie } : cookie;
+
+                const cookie = this.formatCookie(resp.headers["set-cookie"]) || "";
+                res = { ...resp.data, cookie,time }
+                await fs.promises.writeFile("data.json", JSON.stringify(res, null, 2))
+        }
+            this.session.set("cookie",res?.cookie);
+this.session.set("name",res?.logged_in_user?.full_name);
+             return res
         } catch (error) {
             return error;
         }
@@ -47,51 +72,6 @@ class Helper {
         return cookieString?.map((x) => x.match(/(.*?=.*?);/)?.[1])?.join("; ");
     }
 
-    sessionId(cookie) {
-        return cookie.match(/sessionid=(.*?);/)?.[1] || "";
-    }
-
-     crsfToken = async(cookie) => {
-        try {
-            const csrfHeaders = {
-                "User-Agent": "Instagram 100.1.0.29.135 Android",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept-Language": "en-US,en;q=0.9",
-                Cookie: cookie || "",
-            };
-
-            const res = await axios.get(
-                "https://i.instagram.com/api/v1/accounts/current_user/?edit=true",
-                {
-                    headers: csrfHeaders,
-                },
-            );
-            const csrfToken = res.headers["set-cookie"][0] || "";
-            return csrfToken;
-        } catch (error) {
-            return error;
-        }
-    }
-
-    username = async (user,cookie) => {
-        try {
-            let { data } = await axios.get(
-                `https://www.instagram.com/api/v1/users/web_profile_info/?username=${user}`,
-                {
-                    headers: {
-                        "User-Agent": "Instagram 100.1.0.29.135 Android",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        Cookie: cookie || "",
-                    },
-                },
-            );
-            return data.data.user;
-        } catch (err) {
-            throw err;
-        }
-    };
-    
 }
 
 export default Helper;
